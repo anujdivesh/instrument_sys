@@ -1,0 +1,51 @@
+from sqlalchemy import Column, Integer, String, ForeignKey, Float, Boolean
+from sqlalchemy.orm import relationship
+from app.db import Base
+
+class Type(Base):
+    __tablename__ = "type"
+    __table_args__ = {'extend_existing': True}  # Add for consistency
+    
+    id = Column(Integer, primary_key=True, index=True)
+    value = Column(String, unique=True, index=True)
+
+class Status(Base):
+    __tablename__ = "status"
+    __table_args__ = {'extend_existing': True}  # Add for consistency
+    
+    id = Column(Integer, primary_key=True, index=True)
+    value = Column(String, unique=True, index=True)
+
+class AccessMethod(Base):
+    __tablename__ = "access_method"
+    __table_args__ = {'extend_existing': True}  # Add for consistency
+    
+    id = Column(Integer, primary_key=True, index=True)
+    function = Column(String, unique=True, index=True)
+
+class Station(Base):
+    __tablename__ = "station"
+    __table_args__ = {'extend_existing': True}  # Add for consistency
+    
+    id = Column(Integer, primary_key=True, index=True)
+    description = Column(String, index=True)
+    station_id = Column(String, index=True)
+    latitude = Column(Float, index=True)
+    longitude = Column(Float, index=True)
+    owner = Column(String, index=True)
+    maintainer = Column(String, index=True)
+    country_id = Integer()
+    is_active = Column(Boolean, default=True) 
+    variable_id = Column(String, index=True)
+    variable_label = Column(String, index=True)
+    project = Column(String, index=True)
+    type_id = Column(Integer, ForeignKey("type.id"))
+    access_method_id = Column(Integer, ForeignKey("access_method.id"))
+    status_id = Column(Integer, ForeignKey("status.id"))
+    is_active = Column(Boolean, default=True)
+
+    # Relationships
+    types = relationship("app.models.Type", backref="documents")
+    access_method = relationship("app.models.AccessMethod", backref="documents")
+    status = relationship("app.models.Status", backref="documents")
+
