@@ -48,6 +48,7 @@ class StationCreate(BaseModel):
     type_id: Optional[int] = None
     access_method_id: Optional[int] = None
     status_id: Optional[int] = None
+    source_url: Optional[str] = None
 
 class StationOut(StationCreate):
     id: int

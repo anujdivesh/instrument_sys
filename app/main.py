@@ -21,6 +21,8 @@ from typing import List, Optional
 from sqlalchemy import asc, desc
 from app.models import Type, Status, AccessMethod, Station
 from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut
+from app.methods import *
+import httpx
 
 API_TOKEN = "99a920305541f1c38db611ebab95ba"
 
@@ -53,8 +55,14 @@ async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session
 
+# HTTP Client dependency
+async def get_http_client() -> httpx.AsyncClient:
+    async with httpx.AsyncClient(verify=False) as client:
+        yield client
+
 ocean_router = APIRouter(prefix="/instrument")
 
+get_data_router = APIRouter(prefix="/get_data")
 
 @ocean_router.get("/")
 def read_root():
@@ -238,6 +246,15 @@ async def get_stations(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Station))
     return result.scalars().all()
 
+# GET Station by ID
+@ocean_router.get("/stations/{station_id}", response_model=StationOut)
+async def get_station_by_id(station_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Station).where(Station.id == station_id))
+    station_obj = result.scalar_one_or_none()
+    if not station_obj:
+        raise HTTPException(status_code=404, detail="Station not found")
+    return station_obj
+
 # CREATE Station
 @ocean_router.post("/stations/", response_model=StationOut, dependencies=[Depends(verify_token)])
 async def create_station(station_data: StationCreate, db: AsyncSession = Depends(get_db)):
@@ -280,4 +297,72 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
     return Response(status_code=204)
 
 
+'''This section is for the get_data endpoints.  '''
+# GET DATA for specific station
+@get_data_router.get("/station/{station_id}")
+async def get_station_data(
+    station_id: int, 
+    db: AsyncSession = Depends(get_db),
+    http_client: httpx.AsyncClient = Depends(get_http_client)
+):
+    # First, get the station and its access method
+    result = await db.execute(
+        select(Station).where(Station.id == station_id)
+    )
+    station = result.scalar_one_or_none()
+    
+    if not station:
+        raise HTTPException(status_code=404, detail="Station not found")
+    
+    if not station.access_method_id:
+        raise HTTPException(status_code=400, detail="Station has no access method configured")
+    
+    # Get the access method function name
+    access_result = await db.execute(
+        select(AccessMethod).where(AccessMethod.id == station.access_method_id)
+    )
+    access_method = access_result.scalar_one_or_none()
+    
+    if not access_method:
+        raise HTTPException(status_code=404, detail="Access method not found")
+    
+    function_name = access_method.function
+    
+    # Check if the function exists in our method mapping
+    if function_name not in METHOD_MAPPING:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Function '{function_name}' not implemented in methods.py"
+        )
+    
+        # Execute the function dynamically
+    try:
+        function = METHOD_MAPPING[function_name]
+        
+        # Special handling for method_1 which needs station data
+        if function_name == "method_1":
+            # Convert station object to dict for the function
+            station_dict = {
+                "source_url": station.source_url,
+                "variable_id": station.variable_id,
+                "variable_label": station.variable_label
+            }
+            result_data = await method_1(station_dict, http_client)
+        else:
+            result_data = function()
+        
+        return {
+            "station_id": station_id,
+            "station_description": station.description,
+            "data": result_data
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error executing function '{function_name}': {str(e)}"
+        )
+
+
+
 app.include_router(ocean_router)
+app.include_router(get_data_router)

@@ -34,7 +34,7 @@ class Station(Base):
     longitude = Column(Float, index=True)
     owner = Column(String, index=True)
     maintainer = Column(String, index=True)
-    country_id = Integer()
+    country_id = Column(Integer)
     is_active = Column(Boolean, default=True) 
     variable_id = Column(String, index=True)
     variable_label = Column(String, index=True)
@@ -43,6 +43,7 @@ class Station(Base):
     access_method_id = Column(Integer, ForeignKey("access_method.id"))
     status_id = Column(Integer, ForeignKey("status.id"))
     is_active = Column(Boolean, default=True)
+    source_url = Column(String, nullable=True)
 
     # Relationships
     types = relationship("app.models.Type", backref="documents")
