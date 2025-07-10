@@ -36,7 +36,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./dump-instrument_db-202507101459.sql:/docker-entrypoint-initdb.d/dump-instrument_db-202507101459.sql
     ports:
-      - "5432:5432"
+      - "5436:5432"
     restart: unless-stopped
 
 volumes:
