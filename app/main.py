@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import io, os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 from app.db import AsyncSessionLocal
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -19,8 +20,8 @@ import shutil
 from uuid import uuid4
 from typing import List, Optional
 from sqlalchemy import asc, desc
-from app.models import Type, Status, AccessMethod, Station
-from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut
+from app.models import Type, Status, AccessMethod, Station, Token
+from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut, TokenCreate, TokenOut
 from app.methods import *
 import httpx
 
@@ -36,10 +37,10 @@ async def verify_token(x_token: str = Header(...)):
 
 
 app = FastAPI(
-    docs_url="/instrument/docs",
-    redoc_url="/instrument/redoc",
-    openapi_url="/instrument/openapi.json",
-    favicon_url="/instrument/favicon.ico"
+    docs_url="/insitu/docs",
+    redoc_url="/insitu/redoc",
+    openapi_url="/insitu/openapi.json",
+    favicon_url="/insitu/favicon.ico"
 )
 # Configure CORS
 app.add_middleware(
@@ -60,9 +61,9 @@ async def get_http_client() -> httpx.AsyncClient:
     async with httpx.AsyncClient(verify=False) as client:
         yield client
 
-ocean_router = APIRouter(prefix="/instrument")
+ocean_router = APIRouter(prefix="/insitu")
 
-get_data_router = APIRouter(prefix="/get_data")
+get_data_router = APIRouter(prefix="/insitu/get_data")
 
 @ocean_router.get("/")
 def read_root():
@@ -240,19 +241,94 @@ async def delete_access_method(
     return Response(status_code=204)
 
 
+# ---------- TOKEN ENDPOINTS ----------
+# LIST ALL Tokens
+@ocean_router.get("/tokens/", response_model=List[TokenOut])
+async def get_tokens(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Token))
+    return result.scalars().all()
+
+# GET Token by ID
+@ocean_router.get("/tokens/{token_id}", response_model=TokenOut)
+async def get_token_by_id(token_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Token).where(Token.id == token_id))
+    token_obj = result.scalar_one_or_none()
+    if not token_obj:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return token_obj
+
+# CREATE Token
+@ocean_router.post("/tokens/", response_model=TokenOut, dependencies=[Depends(verify_token)])
+async def create_token(token_data: TokenCreate, db: AsyncSession = Depends(get_db)):
+    token_obj = Token(**token_data.dict())
+    db.add(token_obj)
+    try:
+        await db.commit()
+        await db.refresh(token_obj)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Token with this value already exists.")
+    return token_obj
+
+# UPDATE Token
+@ocean_router.put("/tokens/{token_id}", response_model=TokenOut, dependencies=[Depends(verify_token)])
+async def update_token(token_id: int, token_data: TokenCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Token).where(Token.id == token_id))
+    token_obj = result.scalar_one_or_none()
+    if not token_obj:
+        raise HTTPException(status_code=404, detail="Token not found")
+    for key, value in token_data.dict().items():
+        setattr(token_obj, key, value)
+    try:
+        await db.commit()
+        await db.refresh(token_obj)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Token with this value already exists.")
+    return token_obj
+
+# DELETE Token
+@ocean_router.delete("/tokens/{token_id}", status_code=204, dependencies=[Depends(verify_token)])
+async def delete_token(token_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Token).where(Token.id == token_id))
+    token_obj = result.scalar_one_or_none()
+    if not token_obj:
+        raise HTTPException(status_code=404, detail="Token not found")
+    await db.delete(token_obj)
+    await db.commit()
+    return Response(status_code=204)
+
+
 # LIST ALL Stations
 @ocean_router.get("/stations/", response_model=List[StationOut])
 async def get_stations(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Station))
     return result.scalars().all()
 
-# GET Station by ID
+# GET Station by ID or station_id
 @ocean_router.get("/stations/{station_id}", response_model=StationOut)
-async def get_station_by_id(station_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Station).where(Station.id == station_id))
+async def get_station_by_id(station_id: str, db: AsyncSession = Depends(get_db)):
+    
+    # Try to convert to int for internal ID search
+    try:
+        internal_id = int(station_id)
+        result = await db.execute(
+            select(Station).where(
+                or_(
+                    Station.id == internal_id,
+                    Station.station_id == station_id
+                )
+            )
+        )
+    except ValueError:
+        # If not an integer, search only by station_id
+        result = await db.execute(
+            select(Station).where(Station.station_id == station_id)
+        )
+    
     station_obj = result.scalar_one_or_none()
     if not station_obj:
-        raise HTTPException(status_code=404, detail="Station not found")
+        raise HTTPException(status_code=404, detail=f"Station not found with id or station_id: {station_id}")
     return station_obj
 
 # CREATE Station
@@ -277,6 +353,30 @@ async def update_station(station_id: int, station_data: StationCreate, db: Async
         raise HTTPException(status_code=404, detail="Station not found")
     for key, value in station_data.dict(exclude_unset=True).items():
         setattr(station_obj, key, value)
+    try:
+        await db.commit()
+        await db.refresh(station_obj)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Station could not be updated.")
+    return station_obj
+
+# UPDATE Station by station_id (external ID)
+@ocean_router.put("/stations/", response_model=StationOut, dependencies=[Depends(verify_token)])
+async def update_station_by_station_id(station_data: StationCreate, db: AsyncSession = Depends(get_db)):
+    if not station_data.station_id:
+        raise HTTPException(status_code=400, detail="station_id is required")
+    
+    result = await db.execute(select(Station).where(Station.station_id == station_data.station_id))
+    station_obj = result.scalar_one_or_none()
+    if not station_obj:
+        raise HTTPException(status_code=404, detail=f"Station with station_id '{station_data.station_id}' not found")
+    
+    # Update only the fields that are provided (exclude station_id from updates)
+    update_data = station_data.dict(exclude_unset=True, exclude={'station_id'})
+    for key, value in update_data.items():
+        setattr(station_obj, key, value)
+    
     try:
         await db.commit()
         await db.refresh(station_obj)
@@ -339,21 +439,12 @@ async def get_station_data(
     try:
         function = METHOD_MAPPING[function_name]
         
-        # Special handling for method_1 which needs station data
-        if function_name == "method_1":
-            # Convert station object to dict for the function
-            station_dict = {
-                "source_url": station.source_url,
-                "variable_id": station.variable_id,
-                "variable_label": station.variable_label
-            }
-            result_data = await method_1(station_dict, http_client)
-        else:
-            result_data = function()
+        result_data = await function(station)
         
         return {
-            "station_id": station_id,
+            "station_id": station.station_id,
             "station_description": station.description,
+            "data_labels": station.variable_label,
             "data": result_data
         }
     except Exception as e:

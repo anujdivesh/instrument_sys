@@ -23,6 +23,14 @@ class AccessMethod(Base):
     id = Column(Integer, primary_key=True, index=True)
     function = Column(String, unique=True, index=True)
 
+class Token(Base):
+    __tablename__ = "token"
+    __table_args__ = {'extend_existing': True}  # Add for consistency
+    
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String, unique=True, index=True)
+    comments = Column(String, nullable=True)
+
 class Station(Base):
     __tablename__ = "station"
     __table_args__ = {'extend_existing': True}  # Add for consistency
@@ -42,11 +50,12 @@ class Station(Base):
     type_id = Column(Integer, ForeignKey("type.id"))
     access_method_id = Column(Integer, ForeignKey("access_method.id"))
     status_id = Column(Integer, ForeignKey("status.id"))
-    is_active = Column(Boolean, default=True)
+    token_id = Column(Integer, ForeignKey("token.id"), nullable=True)
     source_url = Column(String, nullable=True)
 
     # Relationships
     types = relationship("app.models.Type", backref="documents")
     access_method = relationship("app.models.AccessMethod", backref="documents")
     status = relationship("app.models.Status", backref="documents")
+    token = relationship("app.models.Token", backref="stations")
 
