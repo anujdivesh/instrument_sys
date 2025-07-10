@@ -401,14 +401,24 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
 # GET DATA for specific station
 @get_data_router.get("/station/{station_id}")
 async def get_station_data(
-    station_id: int, 
+    station_id: str, 
     db: AsyncSession = Depends(get_db),
     http_client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    # First, get the station and its access method
-    result = await db.execute(
-        select(Station).where(Station.id == station_id)
-    )
+    # Try to convert to int for internal ID search
+    try:
+        internal_id = int(station_id)
+        result = await db.execute(
+            select(Station).where(
+                or_(Station.id == internal_id, Station.station_id == station_id)
+            )
+        )
+    except ValueError:
+        # If not an integer, search only by station_id
+        result = await db.execute(
+            select(Station).where(Station.station_id == station_id)
+        )
+    
     station = result.scalar_one_or_none()
     
     if not station:
