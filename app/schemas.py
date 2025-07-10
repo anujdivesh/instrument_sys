@@ -32,6 +32,17 @@ class AccessMethodOut(AccessMethodCreate):
     class Config:
         orm_mode = True
 
+# ---------- TOKEN ----------
+class TokenCreate(BaseModel):
+    token: str
+    comments: Optional[str] = None
+
+
+class TokenOut(TokenCreate):
+    id: int
+
+    class Config:
+        orm_mode = True
 
 class StationCreate(BaseModel):
     description: Optional[str] = None
@@ -48,6 +59,7 @@ class StationCreate(BaseModel):
     type_id: Optional[int] = None
     access_method_id: Optional[int] = None
     status_id: Optional[int] = None
+    token_id: Optional[int] = None
     source_url: Optional[str] = None
 
 class StationOut(StationCreate):
