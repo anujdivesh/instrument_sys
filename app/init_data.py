@@ -58,7 +58,8 @@ async def init_database_data():
                 (4, 'e5c7ab12898f4414c0acf817b4bbde', 'SamoaMet'),
                 (5, '743acb9023dec1ef847d5651596352', 'TongaMet'),
                 (6, '99a920305541f1c38db611ebab95ba', 'TMS'),
-                (7, '2a348598f294c6b0ce5f7e41e5c0f5', 'NMS')
+                (7, '2a348598f294c6b0ce5f7e41e5c0f5', 'NMS'),
+                (8, 'bffa4c2e02b85db7fa813d2ea69fa8cfcae5885d23a0ec47edf4382314c803d136d5ff69ffe960f426beae8d1f1f4fba7c6a4c6219b785d254a4a70369713041', 'IOC')
             ]
             for id_val, token_val, comments in tokens:
                 await session.execute(
