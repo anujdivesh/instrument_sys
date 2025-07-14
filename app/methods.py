@@ -71,7 +71,7 @@ async def pacioos_method(station) -> List[dict]:
         source_url = station.source_url.replace("START_TIME", start_time)
         source_url = source_url.replace("END_TIME", end_time)
         source_url = source_url.replace("STATION_ID", station.station_id)
-        # print (source_url)
+        # # print (source_url)
         # return f"start:{start_time} \n end:{end_time} \n url:{source_url}"
         id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
         label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
@@ -196,9 +196,16 @@ async def dart_method(station) -> List[dict]:
         # Sort by date/time (newest first)
         def parse_timestamp(entry):
             try:
-                timestamp_str = entry.get('time', '')
+                timestamp_str = entry.get('time', '') or entry.get('obs_time_utc', '')
                 if timestamp_str:
-                    return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    # Handle different timestamp formats
+                    if 'Z' in timestamp_str:
+                        return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    elif '+' in timestamp_str:
+                        return datetime.fromisoformat(timestamp_str)
+                    else:
+                        # Try parsing as ISO format without timezone
+                        return datetime.fromisoformat(timestamp_str)
                 return datetime.min
             except:
                 return datetime.min
@@ -214,9 +221,152 @@ async def dart_method(station) -> List[dict]:
     except Exception as e:
         return []
 
+async def ioc_method(station) -> List[dict]:
+    """
+    Parse IOC sea level monitoring data, map field names, and return sorted entries.
+    """
+    try:
+        # # print("=== IOC METHOD START ===")
+        source_url = station.source_url
+        variable_id = station.variable_id or ''
+        variable_label = station.variable_label or ''
+        # # print(f"Source URL: {source_url}")
+        # # print(f"Variable ID: {variable_id}")
+        # # print(f"Variable Label: {variable_label}")
+        
+        # Calculate date range (7 days ago to today)
+        now = datetime.now()
+        end_time = now.isoformat(timespec='seconds') + "Z"
+        start_time = (now - timedelta(days=7)).isoformat(timespec='seconds') + "Z"
+        
+        # Replace placeholders in the URL
+        source_url = source_url.replace("STATION_ID", station.station_id)
+        source_url = source_url.replace("TIME_START", start_time)
+        source_url = source_url.replace("TIME_END", end_time)
+        
+        # # print(f"Station ID: {station.station_id}")
+        # # print(f"Start time: {start_time}")
+        # # print(f"End time: {end_time}")
+        # print(f"Final URL: {source_url}")
+        
+        # Get API key from token if station has a token_id
+        api_key = None
+       
+        if station.token_id:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Token).where(Token.id == station.token_id))
+
+                token_obj = result.scalar_one_or_none()
+                if token_obj:
+                    api_key = token_obj.token
+                    # # print(f"API Key found: {api_key}")
+        
+        # Parse column mappings
+        # # print("=== COLUMN MAPPING DEBUG ===")
+        # # print(f"Variable ID (raw): '{variable_id}'")
+        # # print(f"Variable Label (raw): '{variable_label}'")
+        
+        id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
+        label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
+        
+        # print(f"ID columns: {id_columns}")
+        # print(f"Label columns: {label_columns}")
+        # print(f"ID columns length: {len(id_columns)}")
+        # print(f"Label columns length: {len(label_columns)}")
+        
+        if len(id_columns) != len(label_columns):
+            # print("Column lengths don't match, returning empty")
+            return []
+        
+        column_mapping = dict(zip(id_columns, label_columns))
+        # print(f"Column mapping: {column_mapping}")
+        # print("=== END COLUMN MAPPING DEBUG ===")
+        
+        # Prepare headers for the request
+        headers = {
+            'Accept': 'application/json'
+        }
+        if api_key:
+            headers['X-API-KEY'] = api_key
+        # print(f"Headers: {headers}")
+        # print("About to make HTTP request...")
+        
+        # Fetch data
+        # # print("Starting HTTP request...")
+        async with httpx.AsyncClient(verify=False) as client:
+            # print("HTTP client created, making request...")
+            response = await client.get(source_url, headers=headers)
+            # print("HTTP request completed!")
+            response.raise_for_status()
+            data = response.json()
+            
+            # print(f"Response status: {response.status_code}")
+            # print(f"Data type: {type(data)}")
+            # print(f"Data content: {data}")
+            # print(f"Data length: {len(data) if isinstance(data, list) else 'N/A'}")
+            
+            # The data is a list of dicts with keys: slevel, stime, sensor
+            if not isinstance(data, list):
+                # print("Data is not a list, returning empty")
+                return []
+        
+        transformed_data = []
+        for point in data:
+            try:
+                # convert stime to ISO 8601 UTC
+                stime_raw = point.get('stime', '').strip()
+                # Convert 'YYYY-MM-DD HH:MM:SS' to ISO 8601 with Z
+                if stime_raw:
+                    dt = datetime.strptime(stime_raw, "%Y-%m-%d %H:%M:%S")
+                    iso_time = dt.isoformat(timespec='seconds') + "Z"
+                else:
+                    iso_time = ''
+                # Build the mapping input dict
+                mapping_input = {
+                    'slevel': point.get('slevel'),
+                    'stime': iso_time,
+                    'sensor': point.get('sensor'),
+                    'lon_deg': station.longitude,
+                    'lat_deg': station.latitude
+                }
+                # Map to output keys
+                transformed_entry = {}
+                for old_key, new_key in column_mapping.items():
+                    if old_key in mapping_input:
+                        transformed_entry[new_key] = mapping_input[old_key]
+                transformed_data.append(transformed_entry)
+            except Exception:
+                continue
+        # Sort by time (newest first)
+        def parse_timestamp(entry):
+            try:
+                for key in entry:
+                    if 'time' in key:
+                        timestamp_str = entry[key]
+                        if timestamp_str:
+                            if 'Z' in timestamp_str:
+                                return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            elif '+' in timestamp_str:
+                                return datetime.fromisoformat(timestamp_str)
+                            else:
+                                return datetime.fromisoformat(timestamp_str)
+                return datetime.min
+            except:
+                return datetime.min
+        sorted_data = sorted(
+            transformed_data,
+            key=lambda x: parse_timestamp(x),
+            reverse=True
+        )
+        return sorted_data
+    except Exception as e:
+        # print(f"=== IOC METHOD ERROR: {str(e)} ===")
+        return []
+
 METHOD_MAPPING = {
 
     "spot_method": spot_method,
     "pacioos_method": pacioos_method,
-    "dart_method": dart_method
+    "dart_method": dart_method,
+    "ioc_method": ioc_method,
 }

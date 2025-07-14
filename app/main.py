@@ -409,14 +409,14 @@ async def get_station_data(
     try:
         internal_id = int(station_id)
         result = await db.execute(
-            select(Station).where(
+            select(Station).options(selectinload(Station.types)).where(
                 or_(Station.id == internal_id, Station.station_id == station_id)
             )
         )
     except ValueError:
         # If not an integer, search only by station_id
         result = await db.execute(
-            select(Station).where(Station.station_id == station_id)
+            select(Station).options(selectinload(Station.types)).where(Station.station_id == station_id)
         )
     
     station = result.scalar_one_or_none()
@@ -451,9 +451,13 @@ async def get_station_data(
         
         result_data = await function(station)
         
+        # Get the type value from the related Type model
+        type_value = station.types.value if station.types else None
+        
         return {
             "station_id": station.station_id,
             "station_description": station.description,
+            "type": type_value,
             "data_labels": station.variable_label,
             "data": result_data
         }
