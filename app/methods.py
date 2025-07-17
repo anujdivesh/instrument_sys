@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models import Token
 
-async def spot_method(station) -> List[dict]:
+async def spot_method(station, limit=100) -> List[dict]:
     """
     Fetch data from station's source_url, sort by timestamp, and transform column names
     """
@@ -53,11 +53,11 @@ async def spot_method(station) -> List[dict]:
                 if old_key in wave:
                     transformed_wave[new_key] = wave[old_key]
             transformed_waves.append(transformed_wave)
-        return transformed_waves
+        return transformed_waves[:limit]
     except Exception as e:
         return []
 
-async def pacioos_method(station) -> List[dict]:
+async def pacioos_method(station, limit=100) -> List[dict]:
     """
     Parse GeoJSON wave data, map field names, and return sorted wave entries.
     """
@@ -71,7 +71,7 @@ async def pacioos_method(station) -> List[dict]:
         source_url = station.source_url.replace("START_TIME", start_time)
         source_url = source_url.replace("END_TIME", end_time)
         source_url = source_url.replace("STATION_ID", station.station_id)
-        # # print (source_url)
+        print (source_url)
         # return f"start:{start_time} \n end:{end_time} \n url:{source_url}"
         id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
         label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
@@ -102,19 +102,17 @@ async def pacioos_method(station) -> List[dict]:
                     transformed_wave[new_key] = props[old_key]
             transformed_wave["lon_deg"] = coords[0]
             transformed_wave["lat_deg"] = coords[1]
-            if "time" in props:
-                transformed_wave["obs_time_utc"] = props["time"]
             transformed_waves.append(transformed_wave)
         sorted_waves = sorted(
             transformed_waves,
             key=lambda x: parse_timestamp(x.get("obs_time_utc", "")),
             reverse=True
         )
-        return sorted_waves
+        return sorted_waves[:limit]
     except Exception as e:
         return []
 
-async def dart_method(station) -> List[dict]:
+async def dart_method(station, limit=100) -> List[dict]:
     """
     Parse NDBC DART data from text format, map field names, and return sorted entries.
     """
@@ -216,12 +214,12 @@ async def dart_method(station) -> List[dict]:
             reverse=True
         )
         
-        return sorted_data
+        return sorted_data[:limit]
     
     except Exception as e:
         return []
 
-async def ioc_method(station) -> List[dict]:
+async def ioc_method(station, limit=100) -> List[dict]:
     """
     Parse IOC sea level monitoring data, map field names, and return sorted entries.
     """
@@ -358,7 +356,7 @@ async def ioc_method(station) -> List[dict]:
             key=lambda x: parse_timestamp(x),
             reverse=True
         )
-        return sorted_data
+        return sorted_data[:limit]
     except Exception as e:
         # print(f"=== IOC METHOD ERROR: {str(e)} ===")
         return []
