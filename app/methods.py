@@ -7,6 +7,11 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models import Token
 
+def apply_intervals(data: List[dict], interval: int) -> List[dict]:
+    if not data or interval <= 0:
+        return data
+    return [data[i] for i in range(0, len(data), interval + 1)]
+
 async def spot_method(station, limit=100) -> List[dict]:
     """
     Fetch data from station's source_url, sort by timestamp, and transform column names
@@ -53,7 +58,8 @@ async def spot_method(station, limit=100) -> List[dict]:
                 if old_key in wave:
                     transformed_wave[new_key] = wave[old_key]
             transformed_waves.append(transformed_wave)
-        return transformed_waves[:limit]
+        interval = int(getattr(station, 'intervals', 0) or 0)
+        return apply_intervals(transformed_waves[:limit], interval)
     except Exception as e:
         return []
 
@@ -108,7 +114,8 @@ async def pacioos_method(station, limit=100) -> List[dict]:
             key=lambda x: parse_timestamp(x.get("obs_time_utc", "")),
             reverse=True
         )
-        return sorted_waves[:limit]
+        interval = int(getattr(station, 'intervals', 0) or 0)
+        return apply_intervals(sorted_waves[:limit], interval)
     except Exception as e:
         return []
 
@@ -214,7 +221,8 @@ async def dart_method(station, limit=100) -> List[dict]:
             reverse=True
         )
         
-        return sorted_data[:limit]
+        interval = int(getattr(station, 'intervals', 0) or 0)
+        return apply_intervals(sorted_data[:limit], interval)
     
     except Exception as e:
         return []
@@ -356,7 +364,8 @@ async def ioc_method(station, limit=100) -> List[dict]:
             key=lambda x: parse_timestamp(x),
             reverse=True
         )
-        return sorted_data[:limit]
+        interval = int(getattr(station, 'intervals', 0) or 0)
+        return apply_intervals(sorted_data[:limit], interval)
     except Exception as e:
         # print(f"=== IOC METHOD ERROR: {str(e)} ===")
         return []
