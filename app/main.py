@@ -24,6 +24,7 @@ from app.models import Type, Status, AccessMethod, Station, Token
 from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut, TokenCreate, TokenOut
 from app.methods import *
 import httpx
+from sqlalchemy import select, outerjoin
 
 API_TOKEN = "99a920305541f1c38db611ebab95ba"
 
@@ -300,35 +301,57 @@ async def delete_token(token_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # LIST ALL Stations
-@ocean_router.get("/stations/", response_model=List[StationOut])
+@ocean_router.get("/stations/", response_model=List[dict])
 async def get_stations(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Station))
-    return result.scalars().all()
+    stmt = (
+        select(Station, Type.value.label("type_value"))
+        .outerjoin(Type, Station.type_id == Type.id)
+        .where(Station.is_active == True)
+    )
+    result = await db.execute(stmt)
+    stations = []
+    for station, type_value in result.all():
+        station_dict = station.__dict__.copy()
+        station_dict.pop("_sa_instance_state", None)
+        station_dict["type_value"] = type_value
+        # Set owner to 'unknown' if None, empty, or 'NULL'
+        owner = station_dict.get("owner")
+        if not owner or (isinstance(owner, str) and owner.strip().lower() == "null"):
+            station_dict["owner"] = "SPC"
+        stations.append(station_dict)
+    return stations
 
 # GET Station by ID or station_id
 @ocean_router.get("/stations/{station_id}", response_model=StationOut)
 async def get_station_by_id(station_id: str, db: AsyncSession = Depends(get_db)):
-    
+    # Find the status_id for 'active'
+    status_result = await db.execute(select(Status).where(Status.value == 'active'))
+    active_status = status_result.scalar_one_or_none()
+    if not active_status:
+        raise HTTPException(status_code=404, detail="Status 'active' not found")
+    active_status_id = active_status.id
+
     # Try to convert to int for internal ID search
     try:
         internal_id = int(station_id)
         result = await db.execute(
             select(Station).where(
-                or_(
-                    Station.id == internal_id,
-                    Station.station_id == station_id
-                )
+                or_(Station.id == internal_id, Station.station_id == station_id),
+                Station.status_id == active_status_id
             )
         )
     except ValueError:
         # If not an integer, search only by station_id
         result = await db.execute(
-            select(Station).where(Station.station_id == station_id)
+            select(Station).where(
+                Station.station_id == station_id,
+                Station.status_id == active_status_id
+            )
         )
     
     station_obj = result.scalar_one_or_none()
     if not station_obj:
-        raise HTTPException(status_code=404, detail=f"Station not found with id or station_id: {station_id}")
+        raise HTTPException(status_code=404, detail=f"Active station not found with id or station_id: {station_id}")
     return station_obj
 
 # CREATE Station
@@ -386,15 +409,21 @@ async def update_station_by_station_id(station_data: StationCreate, db: AsyncSes
     return station_obj
 
 # DELETE Station
-@ocean_router.delete("/stations/{station_id}", status_code=204, dependencies=[Depends(verify_token)])
+@ocean_router.delete("/stations/{station_id}", response_model=StationOut, dependencies=[Depends(verify_token)])
 async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Station).where(Station.id == station_id))
     station_obj = result.scalar_one_or_none()
     if not station_obj:
         raise HTTPException(status_code=404, detail="Station not found")
-    await db.delete(station_obj)
+    # Find the status with value 'deleted'
+    status_result = await db.execute(select(Status).where(Status.value == 'deleted'))
+    deleted_status = status_result.scalar_one_or_none()
+    if not deleted_status:
+        raise HTTPException(status_code=404, detail="Status 'deleted' not found")
+    station_obj.status_id = deleted_status.id
     await db.commit()
-    return Response(status_code=204)
+    await db.refresh(station_obj)
+    return station_obj
 
 
 '''This section is for the get_data endpoints.  '''
@@ -402,27 +431,39 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
 @get_data_router.get("/station/{station_id}")
 async def get_station_data(
     station_id: str, 
+    limit: int = Query(100, ge=1, le=1000),  # default 100, min 1, max 1000
     db: AsyncSession = Depends(get_db),
     http_client: httpx.AsyncClient = Depends(get_http_client)
 ):
+    # Find the status_id for 'active'
+    status_result = await db.execute(select(Status).where(Status.value == 'active'))
+    active_status = status_result.scalar_one_or_none()
+    if not active_status:
+        raise HTTPException(status_code=404, detail="Status 'active' not found")
+    active_status_id = active_status.id
+
     # Try to convert to int for internal ID search
     try:
         internal_id = int(station_id)
         result = await db.execute(
             select(Station).options(selectinload(Station.types)).where(
-                or_(Station.id == internal_id, Station.station_id == station_id)
+                or_(Station.id == internal_id, Station.station_id == station_id),
+                Station.status_id == active_status_id
             )
         )
     except ValueError:
         # If not an integer, search only by station_id
         result = await db.execute(
-            select(Station).options(selectinload(Station.types)).where(Station.station_id == station_id)
+            select(Station).options(selectinload(Station.types)).where(
+                Station.station_id == station_id,
+                Station.status_id == active_status_id
+            )
         )
     
     station = result.scalar_one_or_none()
     
     if not station:
-        raise HTTPException(status_code=404, detail="Station not found")
+        raise HTTPException(status_code=404, detail="Active station not found")
     
     if not station.access_method_id:
         raise HTTPException(status_code=400, detail="Station has no access method configured")
@@ -449,15 +490,18 @@ async def get_station_data(
     try:
         function = METHOD_MAPPING[function_name]
         
-        result_data = await function(station)
+        result_data = await function(station, limit=limit)
         
         # Get the type value from the related Type model
         type_value = station.types.value if station.types else None
         
         return {
+            "id": station.id,
             "station_id": station.station_id,
             "station_description": station.description,
             "type": type_value,
+            "longitude": station.longitude,
+            "latitude": station.latitude,
             "data_labels": station.variable_label,
             "data": result_data
         }
