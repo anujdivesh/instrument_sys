@@ -80,7 +80,7 @@ async def get_favicon():
         raise HTTPException(status_code=404, detail="Favicon not found")
     return FileResponse(favicon_path)
 
-##DOCUMENT TYPES
+
 ## DOCUMENT TYPES
 @ocean_router.get("/types/", response_model=List[TypeOut])
 async def get_document_types(db: AsyncSession = Depends(get_db)):
@@ -367,39 +367,23 @@ async def create_station(station_data: StationCreate, db: AsyncSession = Depends
         raise HTTPException(status_code=400, detail="Station could not be created.")
     return station_obj
 
-# UPDATE Station
-@ocean_router.put("/stations/{station_id}", response_model=StationOut, dependencies=[Depends(verify_token)])
-async def update_station(station_id: int, station_data: StationCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Station).where(Station.id == station_id))
-    station_obj = result.scalar_one_or_none()
-    if not station_obj:
-        raise HTTPException(status_code=404, detail="Station not found")
-    for key, value in station_data.dict(exclude_unset=True).items():
-        setattr(station_obj, key, value)
+# UPDATE Station by id or station_id
+@ocean_router.put("/stations/{identifier}", response_model=StationOut, dependencies=[Depends(verify_token)])
+async def update_station_by_identifier(identifier: str, station_data: StationCreate, db: AsyncSession = Depends(get_db)):
+    # Try to convert identifier to int for internal id search
     try:
-        await db.commit()
-        await db.refresh(station_obj)
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail="Station could not be updated.")
-    return station_obj
-
-# UPDATE Station by station_id (external ID)
-@ocean_router.put("/stations/", response_model=StationOut, dependencies=[Depends(verify_token)])
-async def update_station_by_station_id(station_data: StationCreate, db: AsyncSession = Depends(get_db)):
-    if not station_data.station_id:
-        raise HTTPException(status_code=400, detail="station_id is required")
-    
-    result = await db.execute(select(Station).where(Station.station_id == station_data.station_id))
+        internal_id = int(identifier)
+        result = await db.execute(select(Station).where(Station.id == internal_id))
+    except ValueError:
+        # If not an integer, search by station_id
+        result = await db.execute(select(Station).where(Station.station_id == identifier))
     station_obj = result.scalar_one_or_none()
     if not station_obj:
-        raise HTTPException(status_code=404, detail=f"Station with station_id '{station_data.station_id}' not found")
-    
-    # Update only the fields that are provided (exclude station_id from updates)
-    update_data = station_data.dict(exclude_unset=True, exclude={'station_id'})
+        raise HTTPException(status_code=404, detail=f"Station not found with id or station_id: {identifier}")
+    # Update only the fields that are provided (exclude station_id from updates if updating by station_id)
+    update_data = station_data.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(station_obj, key, value)
-    
     try:
         await db.commit()
         await db.refresh(station_obj)

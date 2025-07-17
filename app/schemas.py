@@ -61,6 +61,7 @@ class StationCreate(BaseModel):
     status_id: Optional[int] = None
     token_id: Optional[int] = None
     source_url: Optional[str] = None
+    intervals: Optional[float] = 0  
 
 class StationOut(StationCreate):
     id: int

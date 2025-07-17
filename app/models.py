@@ -52,6 +52,7 @@ class Station(Base):
     status_id = Column(Integer, ForeignKey("status.id"))
     token_id = Column(Integer, ForeignKey("token.id"), nullable=True)
     source_url = Column(String, nullable=True)
+    intervals = Column(Float, default=0) 
 
     # Relationships
     types = relationship("app.models.Type", backref="documents")
