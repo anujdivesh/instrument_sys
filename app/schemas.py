@@ -61,10 +61,16 @@ class StationCreate(BaseModel):
     status_id: Optional[int] = None
     token_id: Optional[int] = None
     source_url: Optional[str] = None
-    intervals: Optional[float] = 0  
+    intervals: Optional[float] = 0
+    bad_data: Optional[str] = None  
 
 class StationOut(StationCreate):
     id: int
 
     class Config:
         orm_mode = True
+
+# ---------- BAD DATA SCHEMAS ----------
+class BadDataRequest(BaseModel):
+    station_id: str
+    bad_data: str
