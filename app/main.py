@@ -21,7 +21,7 @@ from uuid import uuid4
 from typing import List, Optional
 from sqlalchemy import asc, desc
 from app.models import Type, Status, AccessMethod, Station, Token
-from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut, TokenCreate, TokenOut
+from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut, TokenCreate, TokenOut, BadDataRequest
 from app.methods import *
 import httpx
 from sqlalchemy import select, outerjoin
@@ -318,6 +318,8 @@ async def get_stations(db: AsyncSession = Depends(get_db)):
         owner = station_dict.get("owner")
         if not owner or (isinstance(owner, str) and owner.strip().lower() == "null"):
             station_dict["owner"] = "SPC"
+        # Ensure bad_data is included (it should already be there from __dict__)
+        station_dict["bad_data"] = station.bad_data
         stations.append(station_dict)
     return stations
 
@@ -410,6 +412,53 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
     return station_obj
 
 
+# ---------- BAD DATA ENDPOINTS ----------
+
+# PUT bad_data with JSON body
+@ocean_router.put("/bad_data/", dependencies=[Depends(verify_token)])
+async def update_bad_data(
+    request: BadDataRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    station_id = request.station_id
+    bad_data = request.bad_data
+    
+    # Try to convert to int for internal ID search
+    try:
+        internal_id = int(station_id)
+        # First try to find by internal ID
+        result = await db.execute(
+            select(Station).where(Station.id == internal_id)
+        )
+        station_obj = result.scalar_one_or_none()
+        if not station_obj:
+            # If not found by internal ID, try by station_id
+            result = await db.execute(
+                select(Station).where(Station.station_id == station_id)
+            )
+            station_obj = result.scalar_one_or_none()
+    except ValueError:
+        # If not an integer, search by station_id
+        result = await db.execute(
+            select(Station).where(Station.station_id == station_id)
+        )
+        station_obj = result.scalar_one_or_none()
+    if not station_obj:
+        raise HTTPException(status_code=404, detail=f"Station not found with id or station_id: {station_id}")
+    
+    # Update the bad_data field (allows empty strings)
+    station_obj.bad_data = bad_data
+    await db.commit()
+    await db.refresh(station_obj)
+    
+    return {
+        "id": station_obj.id,
+        "station_id": station_obj.station_id,
+        "station_description": station_obj.description,
+        "bad_data": station_obj.bad_data,
+        "message": "Bad data updated successfully"
+    }
+
 '''This section is for the get_data endpoints.  '''
 # GET DATA for specific station
 @get_data_router.get("/station/{station_id}")
@@ -487,6 +536,7 @@ async def get_station_data(
             "longitude": station.longitude,
             "latitude": station.latitude,
             "data_labels": station.variable_label,
+            "bad_data": station.bad_data,
             "data": result_data
         }
     except Exception as e:

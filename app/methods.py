@@ -12,6 +12,38 @@ def apply_intervals(data: List[dict], interval: int) -> List[dict]:
         return data
     return [data[i] for i in range(0, len(data), interval + 1)]
 
+def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
+    """
+    Filter out bad data values and replace them with -999
+    """
+    if not bad_data_str or not data:
+        return data
+    
+    # Parse comma-separated bad data values
+    bad_data_values = [val.strip() for val in bad_data_str.split(',') if val.strip()]
+    if not bad_data_values:
+        return data
+    
+    # Time-related fields to skip
+    time_fields = {'time', 'timestamp', 'obs_time_utc', 'stime', 'date', 'datetime'}
+    
+    filtered_data = []
+    for entry in data:
+        filtered_entry = {}
+        for key, value in entry.items():
+            # Skip time-related fields
+            if key.lower() in time_fields:
+                filtered_entry[key] = value
+            else:
+                # Check if value matches any bad data value
+                if str(value) in bad_data_values:
+                    filtered_entry[key] = "-999"
+                else:
+                    filtered_entry[key] = value
+        filtered_data.append(filtered_entry)
+    
+    return filtered_data
+
 async def spot_method(station, limit=100) -> List[dict]:
     """
     Fetch data from station's source_url, sort by timestamp, and transform column names
@@ -59,7 +91,8 @@ async def spot_method(station, limit=100) -> List[dict]:
                     transformed_wave[new_key] = wave[old_key]
             transformed_waves.append(transformed_wave)
         interval = int(getattr(station, 'intervals', 0) or 0)
-        return apply_intervals(transformed_waves[:limit], interval)
+        filtered_data = filter_bad_data(transformed_waves[:limit], getattr(station, 'bad_data', None))
+        return apply_intervals(filtered_data, interval)
     except Exception as e:
         return []
 
@@ -115,7 +148,8 @@ async def pacioos_method(station, limit=100) -> List[dict]:
             reverse=True
         )
         interval = int(getattr(station, 'intervals', 0) or 0)
-        return apply_intervals(sorted_waves[:limit], interval)
+        filtered_data = filter_bad_data(sorted_waves[:limit], getattr(station, 'bad_data', None))
+        return apply_intervals(filtered_data, interval)
     except Exception as e:
         return []
 
@@ -222,7 +256,8 @@ async def dart_method(station, limit=100) -> List[dict]:
         )
         
         interval = int(getattr(station, 'intervals', 0) or 0)
-        return apply_intervals(sorted_data[:limit], interval)
+        filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
+        return apply_intervals(filtered_data, interval)
     
     except Exception as e:
         return []
@@ -365,7 +400,8 @@ async def ioc_method(station, limit=100) -> List[dict]:
             reverse=True
         )
         interval = int(getattr(station, 'intervals', 0) or 0)
-        return apply_intervals(sorted_data[:limit], interval)
+        filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
+        return apply_intervals(filtered_data, interval)
     except Exception as e:
         # print(f"=== IOC METHOD ERROR: {str(e)} ===")
         return []

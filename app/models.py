@@ -53,6 +53,7 @@ class Station(Base):
     token_id = Column(Integer, ForeignKey("token.id"), nullable=True)
     source_url = Column(String, nullable=True)
     intervals = Column(Float, default=0) 
+    bad_data = Column(String, nullable=True)  # Comma-separated string for bad data values
 
     # Relationships
     types = relationship("app.models.Type", backref="documents")
