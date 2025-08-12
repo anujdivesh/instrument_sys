@@ -320,6 +320,9 @@ async def get_stations(db: AsyncSession = Depends(get_db)):
             station_dict["owner"] = "SPC"
         # Ensure bad_data is included (it should already be there from __dict__)
         station_dict["bad_data"] = station.bad_data
+        # # sep
+        station_dict["station_id"] = station.station_id
+        station_dict["display_name"] = station.display_name
         stations.append(station_dict)
     return stations
 
@@ -454,6 +457,7 @@ async def update_bad_data(
     return {
         "id": station_obj.id,
         "station_id": station_obj.station_id,
+        "display_name": station_obj.display_name,
         "station_description": station_obj.description,
         "bad_data": station_obj.bad_data,
         "message": "Bad data updated successfully"
@@ -531,6 +535,7 @@ async def get_station_data(
         return {
             "id": station.id,
             "station_id": station.station_id,
+            "display_name": station.display_name,
             "station_description": station.description,
             "type": type_value,
             "longitude": station.longitude,
