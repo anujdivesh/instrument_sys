@@ -38,6 +38,7 @@ class Station(Base):
     id = Column(Integer, primary_key=True, index=True)
     description = Column(String, index=True)
     station_id = Column(String, index=True)
+    display_name = Column(String, nullable=True, index=True)
     latitude = Column(Float, index=True)
     longitude = Column(Float, index=True)
     owner = Column(String, index=True)

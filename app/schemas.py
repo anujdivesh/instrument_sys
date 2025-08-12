@@ -47,6 +47,7 @@ class TokenOut(TokenCreate):
 class StationCreate(BaseModel):
     description: Optional[str] = None
     station_id: Optional[str] = None
+    display_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     owner: Optional[str] = None
