@@ -467,8 +467,10 @@ async def update_bad_data(
 # GET DATA for specific station
 @get_data_router.get("/station/{station_id}")
 async def get_station_data(
-    station_id: str, 
+    station_id: str,
     limit: int = Query(100, ge=1, le=1000),  # default 100, min 1, max 1000
+    start: str = Query(None, description="Start datetime in ISO format, e.g. 2025-08-01T00:00:00Z"),
+    end: str = Query(None, description="End datetime in ISO format, e.g. 2025-08-21T23:59:59Z"),
     db: AsyncSession = Depends(get_db),
     http_client: httpx.AsyncClient = Depends(get_http_client)
 ):
@@ -519,19 +521,15 @@ async def get_station_data(
     # Check if the function exists in our method mapping
     if function_name not in METHOD_MAPPING:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Function '{function_name}' not implemented in methods.py"
         )
-    
-        # Execute the function dynamically
+    # Execute the function dynamically
     try:
         function = METHOD_MAPPING[function_name]
-        
-        result_data = await function(station, limit=limit)
-        
+        result_data = await function(station, limit=limit, start=start, end=end)
         # Get the type value from the related Type model
         type_value = station.types.value if station.types else None
-        
         return {
             "id": station.id,
             "station_id": station.station_id,
@@ -546,7 +544,7 @@ async def get_station_data(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Error executing function '{function_name}': {str(e)}"
         )
 

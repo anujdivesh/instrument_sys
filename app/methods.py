@@ -44,7 +44,7 @@ def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
     
     return filtered_data
 
-async def spot_method(station, limit=100) -> List[dict]:
+async def spot_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Fetch data from station's source_url, sort by timestamp, and transform column names
     """
@@ -92,11 +92,37 @@ async def spot_method(station, limit=100) -> List[dict]:
             transformed_waves.append(transformed_wave)
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(transformed_waves[:limit], getattr(station, 'bad_data', None))
+        # Datetime filter
+        if start or end:
+            def in_range(entry):
+                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime')
+                if not t:
+                    return False
+                try:
+                    dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                except:
+                    return False
+                if start:
+                    try:
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        if dt < start_dt:
+                            return False
+                    except:
+                        pass
+                if end:
+                    try:
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if dt > end_dt:
+                            return False
+                    except:
+                        pass
+                return True
+            filtered_data = [d for d in filtered_data if in_range(d)]
         return apply_intervals(filtered_data, interval)
     except Exception as e:
         return []
 
-async def pacioos_method(station, limit=100) -> List[dict]:
+async def pacioos_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Parse GeoJSON wave data, map field names, and return sorted wave entries.
     """
@@ -149,11 +175,37 @@ async def pacioos_method(station, limit=100) -> List[dict]:
         )
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(sorted_waves[:limit], getattr(station, 'bad_data', None))
+        # Datetime filter
+        if start or end:
+            def in_range(entry):
+                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime')
+                if not t:
+                    return False
+                try:
+                    dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                except:
+                    return False
+                if start:
+                    try:
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        if dt < start_dt:
+                            return False
+                    except:
+                        pass
+                if end:
+                    try:
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if dt > end_dt:
+                            return False
+                    except:
+                        pass
+                return True
+            filtered_data = [d for d in filtered_data if in_range(d)]
         return apply_intervals(filtered_data, interval)
     except Exception as e:
         return []
 
-async def dart_method(station, limit=100) -> List[dict]:
+async def dart_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Parse NDBC DART data from text format, map field names, and return sorted entries.
     """
@@ -257,12 +309,38 @@ async def dart_method(station, limit=100) -> List[dict]:
         
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
+        # Datetime filter
+        if start or end:
+            def in_range(entry):
+                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime')
+                if not t:
+                    return False
+                try:
+                    dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                except:
+                    return False
+                if start:
+                    try:
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        if dt < start_dt:
+                            return False
+                    except:
+                        pass
+                if end:
+                    try:
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if dt > end_dt:
+                            return False
+                    except:
+                        pass
+                return True
+            filtered_data = [d for d in filtered_data if in_range(d)]
         return apply_intervals(filtered_data, interval)
     
     except Exception as e:
         return []
 
-async def ioc_method(station, limit=100) -> List[dict]:
+async def ioc_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Parse IOC sea level monitoring data, map field names, and return sorted entries.
     """
@@ -401,6 +479,32 @@ async def ioc_method(station, limit=100) -> List[dict]:
         )
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
+        # Datetime filter
+        if start or end:
+            def in_range(entry):
+                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime')
+                if not t:
+                    return False
+                try:
+                    dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                except:
+                    return False
+                if start:
+                    try:
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        if dt < start_dt:
+                            return False
+                    except:
+                        pass
+                if end:
+                    try:
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if dt > end_dt:
+                            return False
+                    except:
+                        pass
+                return True
+            filtered_data = [d for d in filtered_data if in_range(d)]
         return apply_intervals(filtered_data, interval)
     except Exception as e:
         # print(f"=== IOC METHOD ERROR: {str(e)} ===")
