@@ -306,7 +306,7 @@ async def get_stations(db: AsyncSession = Depends(get_db)):
     stmt = (
         select(Station, Type.value.label("type_value"))
         .outerjoin(Type, Station.type_id == Type.id)
-        .where(Station.is_active == True)
+        .where(Station.status_id == 1)
     )
     result = await db.execute(stmt)
     stations = []
