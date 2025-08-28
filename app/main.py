@@ -339,12 +339,24 @@ async def get_station_by_id(station_id: str, db: AsyncSession = Depends(get_db))
     # Try to convert to int for internal ID search
     try:
         internal_id = int(station_id)
+        # First try to find by internal ID
         result = await db.execute(
             select(Station).where(
-                or_(Station.id == internal_id, Station.station_id == station_id),
+                Station.id == internal_id,
                 Station.status_id == active_status_id
             )
         )
+        station_obj = result.scalar_one_or_none()
+        
+        # If not found by internal ID, try by station_id
+        if not station_obj:
+            result = await db.execute(
+                select(Station).where(
+                    Station.station_id == station_id,
+                    Station.status_id == active_status_id
+                )
+            )
+            station_obj = result.scalar_one_or_none()
     except ValueError:
         # If not an integer, search only by station_id
         result = await db.execute(
@@ -353,8 +365,7 @@ async def get_station_by_id(station_id: str, db: AsyncSession = Depends(get_db))
                 Station.status_id == active_status_id
             )
         )
-    
-    station_obj = result.scalar_one_or_none()
+        station_obj = result.scalar_one_or_none()
     if not station_obj:
         raise HTTPException(status_code=404, detail=f"Active station not found with id or station_id: {station_id}")
     return station_obj
@@ -484,12 +495,24 @@ async def get_station_data(
     # Try to convert to int for internal ID search
     try:
         internal_id = int(station_id)
+        # First try to find by internal ID
         result = await db.execute(
             select(Station).options(selectinload(Station.types)).where(
-                or_(Station.id == internal_id, Station.station_id == station_id),
+                Station.id == internal_id,
                 Station.status_id == active_status_id
             )
         )
+        station = result.scalar_one_or_none()
+        
+        # If not found by internal ID, try by station_id
+        if not station:
+            result = await db.execute(
+                select(Station).options(selectinload(Station.types)).where(
+                    Station.station_id == station_id,
+                    Station.status_id == active_status_id
+                )
+            )
+            station = result.scalar_one_or_none()
     except ValueError:
         # If not an integer, search only by station_id
         result = await db.execute(
@@ -498,8 +521,7 @@ async def get_station_data(
                 Station.status_id == active_status_id
             )
         )
-    
-    station = result.scalar_one_or_none()
+        station = result.scalar_one_or_none()
     
     if not station:
         raise HTTPException(status_code=404, detail="Active station not found")
