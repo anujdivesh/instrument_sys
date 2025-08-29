@@ -63,6 +63,7 @@ class StationCreate(BaseModel):
     token_id: Optional[int] = None
     source_url: Optional[str] = None
     intervals: Optional[float] = 0
+    data_limit: Optional[int] = 100
     bad_data: Optional[str] = None  
 
 class StationOut(StationCreate):
