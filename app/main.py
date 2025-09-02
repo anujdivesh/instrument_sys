@@ -302,12 +302,32 @@ async def delete_token(token_id: int, db: AsyncSession = Depends(get_db)):
 
 # LIST ALL Stations
 @ocean_router.get("/stations/", response_model=List[dict])
-async def get_stations(db: AsyncSession = Depends(get_db)):
+async def get_stations(
+    type_id: Optional[int] = Query(None, description="Filter by type ID"),
+    country_id: Optional[int] = Query(None, description="Filter by country ID"),
+    access_method_id: Optional[int] = Query(None, description="Filter by access method ID"),
+    project: Optional[str] = Query(None, description="Filter by project name"),
+    type_value: Optional[str] = Query(None, description="Filter by type value"),
+    db: AsyncSession = Depends(get_db)
+):
     stmt = (
         select(Station, Type.value.label("type_value"))
         .outerjoin(Type, Station.type_id == Type.id)
         .where(Station.status_id == 1)
     )
+    
+    # Apply optional filters
+    if type_id is not None:
+        stmt = stmt.where(Station.type_id == type_id)
+    if country_id is not None:
+        stmt = stmt.where(Station.country_id == country_id)
+    if access_method_id is not None:
+        stmt = stmt.where(Station.access_method_id == access_method_id)
+    if project is not None:
+        stmt = stmt.where(Station.project == project)
+    if type_value is not None:
+        stmt = stmt.where(Type.value == type_value)
+    
     result = await db.execute(stmt)
     stations = []
     for station, type_value in result.all():
