@@ -7,6 +7,9 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models import Token
 
+def calculate_sea_level_mean(slevel, mean):
+    return float(slevel) - abs(float(mean))
+
 def apply_intervals(data: List[dict], interval: int) -> List[dict]:
     if not data or interval <= 0:
         return data
@@ -205,6 +208,8 @@ async def pacioos_method(station, limit=100, start: str = None, end: str = None)
     except Exception as e:
         return []
 
+
+
 async def dart_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Parse NDBC DART data from text format, map field names, and return sorted entries.
@@ -265,7 +270,11 @@ async def dart_method(station, limit=100, start: str = None, end: str = None) ->
                     # Create datetime object
                     dt = datetime(year, month, day, hour, minute, second)
                     
-                    # Create data entry with original column names
+                    
+                    station_mean = station.mean if hasattr(station, 'mean') else 0
+                    if station_mean != 0:
+                        height = calculate_sea_level_mean(height, station_mean)
+                        # print(f"mean: {height}")
                     data_entry = {
                         'time': dt.isoformat(timespec='seconds') + "Z",
                         'm': height,
@@ -441,8 +450,16 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
                 else:
                     iso_time = ''
                 # Build the mapping input dict
+                station_mean = station.mean if hasattr(station, 'mean') else 0
+                
+                # calculate mean
+                if station_mean != 0:
+                    height = calculate_sea_level_mean(point.get('slevel'), station_mean)                    
+                else:
+                    height = point.get('slevel')
+
                 mapping_input = {
-                    'slevel': point.get('slevel'),
+                    'slevel': height,
                     'stime': iso_time,
                     'sensor': point.get('sensor'),
                     'lon_deg': station.longitude,
@@ -514,6 +531,6 @@ METHOD_MAPPING = {
 
     "spot_method": spot_method,
     "pacioos_method": pacioos_method,
-    "dart_method": dart_method,
-    "ioc_method": ioc_method,
+    "dart_method": dart_method, ##applied mean
+    "ioc_method": ioc_method, ##applied mean
 }

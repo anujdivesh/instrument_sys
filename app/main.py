@@ -491,6 +491,7 @@ async def update_bad_data(
         "display_name": station_obj.display_name,
         "station_description": station_obj.description,
         "bad_data": station_obj.bad_data,
+        "mean": station_obj.mean,
         "message": "Bad data updated successfully"
     }
 
@@ -591,6 +592,7 @@ async def get_station_data(
             "latitude": station.latitude,
             "data_labels": station.variable_label,
             "bad_data": station.bad_data,
+            "mean": station.mean,
             "data": result_data
         }
     except Exception as e:

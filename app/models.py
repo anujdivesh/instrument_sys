@@ -56,6 +56,7 @@ class Station(Base):
     intervals = Column(Float, default=0) 
     data_limit = Column(Integer, default=100)  # Default limit for data retrieval
     bad_data = Column(String, nullable=True)  # Comma-separated string for bad data values
+    mean = Column(Float, default=0)  # Mean value column
 
     # Relationships
     types = relationship("app.models.Type", backref="documents")
