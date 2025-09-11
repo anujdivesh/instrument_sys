@@ -64,7 +64,8 @@ class StationCreate(BaseModel):
     source_url: Optional[str] = None
     intervals: Optional[float] = 0
     data_limit: Optional[int] = 100
-    bad_data: Optional[str] = None  
+    bad_data: Optional[str] = None
+    mean: Optional[float] = 0  
 
 class StationOut(StationCreate):
     id: int
