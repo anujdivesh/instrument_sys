@@ -65,13 +65,18 @@ class StationCreate(BaseModel):
     intervals: Optional[float] = 0
     data_limit: Optional[int] = 100
     bad_data: Optional[str] = None
-    mean: Optional[float] = 0  
+    mean: Optional[float] = 0
+    chart_type: Optional[str] = "line"
 
 class StationOut(StationCreate):
     id: int
 
     class Config:
         orm_mode = True
+
+
+class ChartTypeUpdate(BaseModel):
+    chart_type: str
 
 # ---------- BAD DATA SCHEMAS ----------
 class BadDataRequest(BaseModel):
