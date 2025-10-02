@@ -21,7 +21,20 @@ from uuid import uuid4
 from typing import List, Optional
 from sqlalchemy import asc, desc
 from app.models import Type, Status, AccessMethod, Station, Token
-from app.schemas import TypeCreate, TypeOut, StatusCreate, StatusOut, AccessMethodCreate, AccessMethodOut, StationCreate, StationOut, TokenCreate, TokenOut, BadDataRequest
+from app.schemas import (
+    TypeCreate,
+    TypeOut,
+    StatusCreate,
+    StatusOut,
+    AccessMethodCreate,
+    AccessMethodOut,
+    StationCreate,
+    StationOut,
+    TokenCreate,
+    TokenOut,
+    BadDataRequest,
+    ChartTypeUpdate,
+)
 from app.methods import *
 import httpx
 from sqlalchemy import select, outerjoin
@@ -446,6 +459,42 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db)):
     return station_obj
 
 
+# UPDATE chart_type for a station by internal id or station_id
+@ocean_router.put(
+    "/stations/{identifier}/chart_type",
+    response_model=StationOut,
+    dependencies=[Depends(verify_token)]
+)
+async def update_station_chart_type(
+    identifier: str,
+    payload: ChartTypeUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    station_obj = None
+
+    # Try to find by internal numeric ID 
+    try:
+        internal_id = int(identifier)
+        result = await db.execute(select(Station).where(Station.id == internal_id))
+        station_obj = result.scalar_one_or_none()
+    except ValueError:
+        station_obj = None
+
+    # # If not found (or identifier wasn't numeric), fall back to station_id string
+    # if not station_obj:
+    #     result = await db.execute(select(Station).where(Station.station_id == identifier))
+    #     station_obj = result.scalar_one_or_none()
+
+    if not station_obj:
+        raise HTTPException(status_code=404, detail=f"Station not found with id or station_id: {identifier}")
+
+    station_obj.chart_type = payload.chart_type
+
+    await db.commit()
+    await db.refresh(station_obj)
+    return station_obj
+
+
 # ---------- BAD DATA ENDPOINTS ----------
 
 # PUT bad_data with JSON body
@@ -593,6 +642,7 @@ async def get_station_data(
             "data_labels": station.variable_label,
             "bad_data": station.bad_data,
             "mean": station.mean,
+            "chart_type": station.chart_type,
             "data": result_data
         }
     except Exception as e:
