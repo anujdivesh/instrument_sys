@@ -12,15 +12,17 @@ async def init_database_data():
             print("Starting database initialization...")
             
             # 1. Insert access_method data
-            print("Inserting access_method data...")
+            print("Upserting access_method data...")
             access_methods = [
-                (3, 'dart_method'),
                 (1, 'spot_method'),
-                (2, 'Pacino's_method')
+                (2, 'pacioos_method'),
+                (3, 'dart_method'),
+                (4, 'ioc_method'),
+                (5, 'neon_method')
             ]
             for id_val, function in access_methods:
                 await session.execute(
-                    text("INSERT INTO access_method (id, function) VALUES (:id, :function) ON CONFLICT (id) DO NOTHING"),
+                    text("INSERT INTO access_method (id, function) VALUES (:id, :function) ON CONFLICT (id) DO UPDATE SET function = EXCLUDED.function"),
                     {"id": id_val, "function": function}
                 )
             
@@ -180,7 +182,7 @@ async def init_database_data():
             
             # 6. Update sequences to match the data
             print("Updating sequences...")
-            await session.execute(text("SELECT setval('access_method_id_seq', 3, True)"))
+            await session.execute(text("SELECT setval('access_method_id_seq', 5, True)"))
             await session.execute(text("SELECT setval('status_id_seq', 2, True)"))
             await session.execute(text("SELECT setval('type_id_seq', 3, True)"))
             await session.execute(text("SELECT setval('token_id_seq', 7, True)"))
