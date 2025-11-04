@@ -19,19 +19,80 @@ def apply_intervals(data: List[dict], interval: int) -> List[dict]:
 
 def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
     """
-    Filter out bad data values and replace them with -999
+    Filter out bad data values and replace them with -999.
+      - "<X": any numeric value less than X is replaced
+      - ">X": any numeric value greater than X is replaced
+      - "V": any value equal to V is replaced (string or numeric)
     """
     if not bad_data_str or not data:
         return data
-    
-    # Parse comma-separated bad data values
-    bad_data_values = [val.strip() for val in bad_data_str.split(',') if val.strip()]
-    if not bad_data_values:
+
+    # Parse rules
+    tokens = [t.strip() for t in bad_data_str.split(',') if t.strip()]
+    if not tokens:
         return data
-    
+
+    rules = []  # tuples of (kind, ...): ('cmp','lt'|'gt', float) | ('eq_num', float) | ('eq_str', str)
+    for tok in tokens:
+        if tok and tok[0] in ('<', '>') and len(tok) > 1:
+            op = 'lt' if tok[0] == '<' else 'gt'
+            try:
+                thr = float(tok[1:].strip())
+                rules.append(('cmp', op, thr))
+            except Exception:
+                # Ignore malformed threshold; continue with next token
+                continue
+        else:
+            # equality rule; try numeric first
+            try:
+                num = float(tok)
+                rules.append(('eq_num', num))
+            except Exception:
+                rules.append(('eq_str', tok))
+
+    if not rules:
+        return data
+
     # Time-related fields to skip
     time_fields = {'time', 'timestamp', 'obs_time_utc', 'stime', 'date', 'datetime'}
-    
+
+    def is_bad_value(val: Any) -> bool:
+        # lazily compute numeric/string representations
+        num_val = None
+        num_ready = False
+        str_val = None
+        for r in rules:
+            kind = r[0]
+            if kind == 'cmp':
+                if not num_ready:
+                    try:
+                        num_val = float(val)
+                    except Exception:
+                        num_val = None
+                    num_ready = True
+                if num_val is None:
+                    continue
+                _, op, thr = r
+                if op == 'lt' and num_val < thr:
+                    return True
+                if op == 'gt' and num_val > thr:
+                    return True
+            elif kind == 'eq_num':
+                if not num_ready:
+                    try:
+                        num_val = float(val)
+                    except Exception:
+                        num_val = None
+                    num_ready = True
+                if num_val is not None and num_val == r[1]:
+                    return True
+            elif kind == 'eq_str':
+                if str_val is None:
+                    str_val = str(val)
+                if str_val == r[1]:
+                    return True
+        return False
+
     filtered_data = []
     for entry in data:
         filtered_entry = {}
@@ -40,13 +101,9 @@ def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
             if key.lower() in time_fields:
                 filtered_entry[key] = value
             else:
-                # Check if value matches any bad data value
-                if str(value) in bad_data_values:
-                    filtered_entry[key] = "-999"
-                else:
-                    filtered_entry[key] = value
+                filtered_entry[key] = "-999" if is_bad_value(value) else value
         filtered_data.append(filtered_entry)
-    
+
     return filtered_data
 
 def to_iso_z(ts: Any) -> str:
