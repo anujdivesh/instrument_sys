@@ -141,7 +141,6 @@ async def pacioos_method(station, limit=100, start: str = None, end: str = None)
         source_url = station.source_url.replace("START_TIME", start_time)
         source_url = source_url.replace("END_TIME", end_time)
         source_url = source_url.replace("STATION_ID", station.station_id)
-        print (source_url)
         # return f"start:{start_time} \n end:{end_time} \n url:{source_url}"
         id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
         label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
@@ -591,7 +590,6 @@ async def refresh_neon_token() -> dict:
                 if token_obj:
                     token_obj.token = new_token
                     await db.commit()
-                    print(f"✓ NEON token refreshed successfully: {new_token[:20]}...")
                 else:
                     print("Error: neon_token entry not found in database")
                     return None
@@ -621,16 +619,18 @@ async def refresh_neon_token() -> dict:
 async def actual_neon_method(station, token: str, session_id: str, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Fetch and process data from NIWA NEON REST service.
+    Supports multiple URLs separated by | for merging datasets (e.g., sea level + temperature).
     
     Args:
         station: Station object with configuration
         token: Valid NEON authentication token
+        session_id: ASP.NET session cookie
         limit: Maximum number of records to return
         start: Start datetime filter (ISO format)
         end: End datetime filter (ISO format)
     
     Returns:
-        List of processed data records
+        List of processed data records merged by timestamp
     """
     # Build URL and mapping; let HTTP errors bubble up so caller can refresh token
     source_url = station.source_url
@@ -648,28 +648,17 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
     start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S")
     end_time_str = end_time.strftime("%Y-%m-%dT%H:%M:%S")
 
-    # Replace placeholders in URL
-    source_url = source_url.replace("START_TIME", start_time_str)
-    source_url = source_url.replace("END_TIME", end_time_str)
-
-    # Ensure query params are correctly separated (defensive fix if template misses &)
-    # Make sure Interval= and Method= are preceded by & or ?
-    source_url = re.sub(r'(?<![&?])Interval=', r'&Interval=', source_url)
-    source_url = re.sub(r'(?<![&?])Method=', r'&Method=', source_url)
-
-    print(f"NEON API URL: {source_url}")
-
-    # Parse column mappings
+    # Split multiple URLs (if any) separated by |
+    urls = [u.strip() for u in source_url.split('|') if u.strip()]
+    
+    # Parse column mappings - expect format like "Time,Value,Time,Value" for multiple URLs
+    # and labels like "time,sea_value,time,sea_temp"
     id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
     label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
 
     if len(id_columns) != len(label_columns):
         print("Error: Column mapping mismatch")
         return []
-
-    # Build a case-insensitive mapping from source keys -> output labels
-    column_mapping = dict(zip(id_columns, label_columns))
-    ci_mapping = {k.strip().lower(): v.strip() for k, v in column_mapping.items()}
 
     # Prepare headers and cookies per NEON requirements
     headers = {
@@ -681,68 +670,146 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
     if session_id:
         cookies["ASP.NET_SessionId"] = str(session_id)
 
-    # Make API call (let HTTPStatusError propagate)
-    async with httpx.AsyncClient(verify=False) as client:
-        response = await client.get(source_url, headers=headers, cookies=cookies)
-        response.raise_for_status()
-        data = response.json()
-
-    # Extract and transform samples safely
+    # Fetch data from each URL and extract dataset IDs
+    all_datasets = []
+    
     try:
-        result_data = data.get("GetDataResampledResult", {}) if isinstance(data, dict) else {}
-        samples = result_data.get("Samples", []) if isinstance(result_data, dict) else []
-        print(f"NEON samples retrieved: {len(samples)}")
-        if not samples:
+        async with httpx.AsyncClient(verify=False) as client:
+            for idx, url_template in enumerate(urls):
+                # Replace placeholders in URL
+                url = url_template.replace("START_TIME", start_time_str)
+                url = url.replace("END_TIME", end_time_str)
+                
+                # Ensure query params are correctly separated
+                url = re.sub(r'(?<![&?])Interval=', r'&Interval=', url)
+                url = re.sub(r'(?<![&?])Method=', r'&Method=', url)
+                
+                # Extract dataset ID from URL (e.g., GetDataResampled/273417 -> 273417)
+                dataset_id_match = re.search(r'/GetDataResampled/(\d+)', url)
+                dataset_id = dataset_id_match.group(1) if dataset_id_match else None
+                
+                
+                
+                # Make API call (let HTTPStatusError propagate)
+                response = await client.get(url, headers=headers, cookies=cookies)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Extract samples
+                result_data = data.get("GetDataResampledResult", {}) if isinstance(data, dict) else {}
+                samples = result_data.get("Samples", []) if isinstance(result_data, dict) else []
+                
+                
+                # Store dataset with its ID for mapping later
+                all_datasets.append({
+                    'dataset_id': dataset_id,
+                    'samples': samples
+                })
+        
+        # Now merge datasets by timestamp
+        # Map datasets to labels in order: first non-time label goes to first URL, etc.
+        
+        
+        
+        # Find time label and value labels
+        time_label = None
+        value_labels = []
+        
+        for label in label_columns:
+            if 'time' in label.lower():
+                time_label = label
+                
+            else:
+                value_labels.append(label)
+        
+        if not time_label:
+            time_label = "time"  # fallback
+        
+        # Try to match by dataset ID in label first
+        dataset_label_map = {}
+        for label in value_labels:
+            id_match = re.search(r'_(\d+)$', label)
+            if id_match:
+                dataset_id = id_match.group(1)
+                dataset_label_map[dataset_id] = label
+        
+        # If no ID-based mapping, use position-based mapping
+        if not dataset_label_map:
+            for idx, dataset_info in enumerate(all_datasets):
+                if idx < len(value_labels):
+                    dataset_label_map[dataset_info['dataset_id']] = value_labels[idx]
+                    
+        
+        
+        # Build time-indexed data structure
+        merged_by_time = {}
+        
+        for dataset_info in all_datasets:
+            dataset_id = dataset_info['dataset_id']
+            samples = dataset_info['samples']
+            
+            # Find the corresponding value label for this dataset
+            value_label = dataset_label_map.get(dataset_id)
+            
+            if not value_label:
+                continue
+            
+            sample_count = 0
+            for sample in samples:
+                raw_val = sample.get('Value')
+                try:
+                    val_num = float(raw_val) if raw_val is not None and raw_val != '' else None
+                except:
+                    val_num = None
+                
+                time_val = sample.get('Time')
+                
+                if not time_val:
+                    continue
+                
+                # Initialize or update entry for this timestamp
+                if time_val not in merged_by_time:
+                    merged_by_time[time_val] = {
+                        time_label: time_val
+                    }
+                
+                # Add the value field with its specific label
+                final_val = val_num if val_num is not None else raw_val
+                merged_by_time[time_val][value_label] = final_val
+                
+                sample_count += 1
+                # Debug: log first few entries
+                
+        
+        # Convert merged data to list
+        transformed_data = list(merged_by_time.values())
+        
+        if not transformed_data:
             return []
-
-        transformed_data = []
-        for sample in samples:
-            raw_val = sample.get('Value')
-            try:
-                val_num = float(raw_val) if raw_val is not None and raw_val != '' else None
-            except:
-                val_num = None
-            sample_dict = {
-                'Time': sample.get('Time'),
-                'Value': val_num if val_num is not None else raw_val,
-                'lon_deg': station.longitude,
-                'lat_deg': station.latitude
-            }
-
-            # Case-insensitive mapping
-            lower_sample = {str(k).lower(): v for k, v in sample_dict.items()}
-            transformed_entry = {}
-            for src_key_lower, out_label in ci_mapping.items():
-                if src_key_lower in lower_sample:
-                    transformed_entry[out_label] = lower_sample[src_key_lower]
-            if transformed_entry:
-                transformed_data.append(transformed_entry)
-
+        
         # Sort by timestamp (newest first)
         def parse_timestamp(entry):
             try:
-                for key, val in entry.items():
-                    if 'time' in key.lower():
-                        ts = val
-                        if ts:
-                            return datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                t = entry.get('time')
+                if t:
+                    return datetime.fromisoformat(str(t).replace('Z', '+00:00'))
                 return datetime.min
             except:
                 return datetime.min
-
+        
         sorted_data = sorted(
             transformed_data,
             key=lambda x: parse_timestamp(x),
             reverse=True
         )
-
+        
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
-
+        
         # Optional datetime filter using query params
         if start or end:
             def in_range(entry):
-                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime') or entry.get('Time')
+                t = entry.get('time')
                 if not t:
                     return False
                 try:
@@ -765,8 +832,9 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
                         pass
                 return True
             filtered_data = [d for d in filtered_data if in_range(d)]
-
+        
         return apply_intervals(filtered_data, interval)
+        
     except Exception as e:
         print(f"Error in actual_neon_method (transform): {str(e)}")
         return []
@@ -790,7 +858,6 @@ async def neon_method(station, limit=100, start: str = None, end: str = None) ->
             neon_cookie_obj = result_cookie.scalar_one_or_none()
 
             if not neon_token_obj or not neon_token_obj.token:
-                print("Info: neon_token missing, refreshing...")
                 refreshed = await refresh_neon_token()
                 if not refreshed:
                     return []
@@ -800,26 +867,20 @@ async def neon_method(station, limit=100, start: str = None, end: str = None) ->
                 current_token = neon_token_obj.token
                 current_cookie = neon_cookie_obj.token if neon_cookie_obj else None
 
-        # Attempt actual call with existing token and cookie
-        print("Attempting NEON API call with existing token...")
+    # Attempt actual call with existing token and cookie
         return await actual_neon_method(station, current_token, current_cookie, limit, start, end)
 
     except httpx.HTTPStatusError as e:
         # If auth failed, refresh token and retry once
         if e.response is not None and e.response.status_code == 401:
-            print("⚠ Auth failed (401) - Refreshing token...")
             refreshed = await refresh_neon_token()
             if not refreshed:
-                print("Error: Failed to refresh token")
                 return []
-            print("Retrying with new token...")
             try:
                 return await actual_neon_method(station, refreshed.get("token"), refreshed.get("session_id"), limit, start, end)
             except httpx.HTTPStatusError as e2:
-                print(f"Second attempt failed with status {e2.response.status_code if e2.response else 'unknown'}")
                 return []
         else:
-            print(f"HTTP error during NEON call: {e.response.status_code if e.response else 'unknown'}")
             return []
     except Exception as e:
         print(f"Error in neon_method: {str(e)}")
