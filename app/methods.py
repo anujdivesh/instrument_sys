@@ -822,6 +822,23 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
         
         # Convert merged data to list
         transformed_data = list(merged_by_time.values())
+
+        # sea_level, sea_temp, time
+        if transformed_data:
+            desired_order = [lbl for lbl in value_labels] + [time_label]
+            ordered_rows = []
+            for row in transformed_data:
+                new_row = {}
+             
+                for k in desired_order:
+                    if k in row:
+                        new_row[k] = row[k]
+               
+                for k, v in row.items():
+                    if k not in new_row:
+                        new_row[k] = v
+                ordered_rows.append(new_row)
+            transformed_data = ordered_rows
         
         if not transformed_data:
             return []

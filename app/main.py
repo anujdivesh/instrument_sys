@@ -643,6 +643,7 @@ async def get_station_data(
             "bad_data": station.bad_data,
             "mean": station.mean,
             "chart_type": station.chart_type,
+            "data_limit": station.data_limit,
             "data": result_data
         }
     except Exception as e:
