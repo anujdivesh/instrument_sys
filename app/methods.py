@@ -1,7 +1,7 @@
 import json
 import re
 from typing import List, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 import httpx
 from sqlalchemy import select
@@ -48,6 +48,41 @@ def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
         filtered_data.append(filtered_entry)
     
     return filtered_data
+
+def to_iso_z(ts: Any) -> str:
+    """
+    Normalize various timestamp formats to ISO 8601 UTC string (YYYY-MM-DDTHH:MM:SSZ).
+    Handles:
+      - ISO strings with or without timezone or milliseconds
+      - Microsoft JSON date format: /Date(1730592000000+1300)/
+    Returns original string on failure.
+    """
+    if ts is None:
+        return None
+    s = str(ts).strip()
+    if not s:
+        return s
+    try:
+        # Handle Microsoft JSON date format
+        ms_match = re.match(r"^/Date\((\d+)([+-]\d{4})?\)/$", s)
+        if ms_match:
+            ms = int(ms_match.group(1))
+            dt = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Handle standard ISO formats
+        # Normalize trailing Z for fromisoformat
+        if s.endswith('Z'):
+            dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        else:
+            dt = datetime.fromisoformat(s)
+            # If naive, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        dt_utc = dt.astimezone(timezone.utc)
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        # Fallback: return as-is if parsing fails
+        return s
 
 async def spot_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
@@ -639,10 +674,10 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
 
     # Calculate date range per requirement
     now = datetime.now()
-    # End time: date of request at the very beginning (00:00:00)
-    end_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Start time: 5 days ago with the max time (23:59:59)
-    start_time = (now - timedelta(days=5)).replace(hour=23, minute=59, second=59, microsecond=0)
+    # End time: today at the max time (23:59:59) - end of day
+    end_time = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    # Start time: 5 days ago at the beginning (00:00:00) - start of day
+    start_time = (now - timedelta(days=5)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Format times for URL (no colon encoding to match expected format)
     start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -688,7 +723,11 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
                 dataset_id_match = re.search(r'/GetDataResampled/(\d+)', url)
                 dataset_id = dataset_id_match.group(1) if dataset_id_match else None
                 
-                
+                # Print the final URL being requested for debugging/visibility
+                # try:
+                #     print(f"NEON request URL [{idx+1}/{len(urls)}]: {url}")
+                # except Exception:
+                #     pass
                 
                 # Make API call (let HTTPStatusError propagate)
                 response = await client.get(url, headers=headers, cookies=cookies)
@@ -718,7 +757,6 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
         for label in label_columns:
             if 'time' in label.lower():
                 time_label = label
-                
             else:
                 value_labels.append(label)
         
@@ -763,19 +801,20 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
                     val_num = None
                 
                 time_val = sample.get('Time')
+                time_norm = to_iso_z(time_val)
                 
-                if not time_val:
+                if not time_norm:
                     continue
                 
                 # Initialize or update entry for this timestamp
-                if time_val not in merged_by_time:
-                    merged_by_time[time_val] = {
-                        time_label: time_val
+                if time_norm not in merged_by_time:
+                    merged_by_time[time_norm] = {
+                        time_label: time_norm
                     }
                 
                 # Add the value field with its specific label
                 final_val = val_num if val_num is not None else raw_val
-                merged_by_time[time_val][value_label] = final_val
+                merged_by_time[time_norm][value_label] = final_val
                 
                 sample_count += 1
                 # Debug: log first few entries
@@ -790,7 +829,8 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
         # Sort by timestamp (newest first)
         def parse_timestamp(entry):
             try:
-                t = entry.get('time')
+                # Prefer the configured time label; fallback to common keys
+                t = entry.get(time_label) or entry.get('time') or entry.get('timestamp')
                 if t:
                     return datetime.fromisoformat(str(t).replace('Z', '+00:00'))
                 return datetime.min
@@ -809,7 +849,7 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
         # Optional datetime filter using query params
         if start or end:
             def in_range(entry):
-                t = entry.get('time')
+                t = entry.get(time_label) or entry.get('time') or entry.get('timestamp')
                 if not t:
                     return False
                 try:
