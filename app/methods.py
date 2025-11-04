@@ -101,7 +101,7 @@ def filter_bad_data(data: List[dict], bad_data_str: str) -> List[dict]:
             if key.lower() in time_fields:
                 filtered_entry[key] = value
             else:
-                filtered_entry[key] = "-999" if is_bad_value(value) else value
+                filtered_entry[key] = -999 if is_bad_value(value) else value
         filtered_data.append(filtered_entry)
 
     return filtered_data
