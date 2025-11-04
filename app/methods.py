@@ -875,6 +875,8 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
         
         return apply_intervals(filtered_data, interval)
         
+    except httpx.HTTPStatusError as e:        
+        raise
     except Exception as e:
         print(f"Error in actual_neon_method (transform): {str(e)}")
         return []
