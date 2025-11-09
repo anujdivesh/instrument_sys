@@ -464,6 +464,7 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
         source_url = source_url.replace("STATION_ID", station.station_id)
         source_url = source_url.replace("TIME_START", start_time)
         source_url = source_url.replace("TIME_END", end_time)
+        source_url = source_url.replace("LIMIT_DATA", str(limit))
         
         # # print(f"Station ID: {station.station_id}")
         # # print(f"Start time: {start_time}")
