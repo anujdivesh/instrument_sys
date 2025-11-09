@@ -896,6 +896,54 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
                         new_row[k] = v
                 ordered_rows.append(new_row)
             transformed_data = ordered_rows
+
+        # Simple unit normalization: NEON returns sea_level in millimeters; convert to meters.
+        # Per user request, no heuristics or config—just divide any 'sea_level' field by 1000.
+        for row in transformed_data:
+            for key in list(row.keys()):
+                if key.lower() == 'sea_level':
+                    try:
+                        row[key] = float(row[key]) / 1000.0
+                    except Exception:
+                        # Leave value unchanged if not numeric
+                        pass
+
+  
+        try:
+            sea_level_key_candidates = [k for k in (value_labels or []) if 'sea_level' in k.lower() or k.lower() == 'slevel']
+            if transformed_data and sea_level_key_candidates:
+                divisor = None
+                # Prefer explicit attribute if present
+                if hasattr(station, 'sea_level_divisor') and getattr(station, 'sea_level_divisor'):
+                    try:
+                        divisor = float(getattr(station, 'sea_level_divisor'))
+                    except Exception:
+                        divisor = None
+                # Heuristic detection if no explicit divisor
+                if divisor is None:
+                    # Look at first 20 values to guess scale
+                    sample_vals = []
+                    for row in transformed_data[:20]:
+                        for key in sea_level_key_candidates:
+                            if key in row:
+                                try:
+                                    sample_vals.append(float(row[key]))
+                                except Exception:
+                                    pass
+                    if sample_vals and any(v > 50 for v in sample_vals):  # >50 m improbable => likely mm
+                        divisor = 1000.0
+                if divisor and divisor != 0:
+                    for row in transformed_data:
+                        for key in sea_level_key_candidates:
+                            if key in row:
+                                try:
+                                    row[key] = float(row[key]) / divisor
+                                except Exception:
+                                    # leave value as-is if not convertible
+                                    pass
+        except Exception:
+            # Never fail entire method due to scaling logic
+            pass
         
         if not transformed_data:
             return []
