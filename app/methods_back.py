@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import AsyncSessionLocal
 from app.models import Token
-
+import logging
+import math
+logger = logging.getLogger(__name__)
 def calculate_sea_level_mean(slevel, mean):
     return float(slevel) - abs(float(mean))
 
@@ -227,93 +229,78 @@ async def pacioos_method(station, limit=100, start: str = None, end: str = None)
         source_url = station.source_url
         variable_id = station.variable_id or ''
         variable_label = station.variable_label or ''
-        
-        # Use UTC to ensure we catch today's data (Jan 15)
-        now = datetime.now(timezone.utc)
-        end_time = now.isoformat(timespec='seconds').replace("+00:00", "Z")
-        start_time = (now - timedelta(days=7)).isoformat(timespec='seconds').replace("+00:00", "Z")
-        
-        source_url = source_url.replace("START_TIME", start_time)
+        now = datetime.now()
+        end_time = now.isoformat(timespec='seconds') + "Z"
+        start_time = (now - timedelta(days=7)).isoformat(timespec='seconds') + "Z"
+        source_url = station.source_url.replace("START_TIME", start_time)
         source_url = source_url.replace("END_TIME", end_time)
         source_url = source_url.replace("STATION_ID", station.station_id)
-
+        # return f"start:{start_time} \n end:{end_time} \n url:{source_url}"
         id_columns = [col.strip() for col in variable_id.split(',') if col.strip()]
         label_columns = [col.strip() for col in variable_label.split(',') if col.strip()]
         if len(id_columns) != len(label_columns):
             return []
         column_mapping = dict(zip(id_columns, label_columns))
-        
         async with httpx.AsyncClient(verify=False) as client:
             response = await client.get(source_url)
             response.raise_for_status()
             data = response.json()
-            
         features = data.get("features", [])
         if not features:
             return []
-
-        def get_dt(entry):
-            # Try to find a timestamp in the entry
-            for val in entry.values():
-                try:
-                    iso = to_iso_z(val)
-                    if iso:
-                        return datetime.fromisoformat(iso.replace('Z', '+00:00'))
-                except: continue
-            return datetime.min
-
-        # 1. Extract all available data
-        all_data = []
+        def parse_timestamp(ts: str):
+            try:
+                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except:
+                return datetime.min
+        transformed_waves = []
         for feature in features:
             props = feature.get("properties", {})
             coords = feature.get("geometry", {}).get("coordinates", [])
-            if not props: continue
-            
-            entry = {}
+            if not props or len(coords) != 2:
+                continue
+            transformed_wave = {}
             for old_key, new_key in column_mapping.items():
                 if old_key in props:
-                    entry[new_key] = props[old_key]
-            
-            if len(coords) == 2:
-                entry["lon_deg"], entry["lat_deg"] = coords[0], coords[1]
-                
-            if entry:
-                all_data.append(entry)
-
-        # 2. Sort newest first to accurately slice the MOST RECENT records
-        all_data.sort(key=get_dt, reverse=True)
-        
-        # 3. Apply limit to get the newest 'limit' items
-        recent_data = all_data[:limit]
-
-        # 4. Filter bad data
-        filtered_data = filter_bad_data(recent_data, getattr(station, 'bad_data', None))
-
-        # 5. Sort the final result to OLDEST FIRST, NEWEST LAST (ascending)
-        filtered_data.sort(key=get_dt)
-
-        # Datetime filter (start/end parameters)
+                    transformed_wave[new_key] = props[old_key]
+            transformed_wave["lon_deg"] = coords[0]
+            transformed_wave["lat_deg"] = coords[1]
+            transformed_waves.append(transformed_wave)
+        sorted_waves = sorted(
+            transformed_waves,
+            key=lambda x: parse_timestamp(x.get("obs_time_utc", "")),
+            reverse=True
+        )
+        interval = int(getattr(station, 'intervals', 0) or 0)
+        filtered_data = filter_bad_data(sorted_waves[:limit], getattr(station, 'bad_data', None))
+        # Datetime filter
         if start or end:
-            def in_range(item):
-                dt = get_dt(item)
-                if dt == datetime.min: return False
+            def in_range(entry):
+                t = entry.get('time') or entry.get('timestamp') or entry.get('obs_time_utc') or entry.get('stime') or entry.get('date') or entry.get('datetime')
+                if not t:
+                    return False
+                try:
+                    dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
+                except:
+                    return False
                 if start:
                     try:
-                        s_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                        if dt < s_dt: return False
-                    except: pass
+                        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        if dt < start_dt:
+                            return False
+                    except:
+                        pass
                 if end:
                     try:
-                        e_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
-                        if dt > e_dt: return False
-                    except: pass
+                        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                        if dt > end_dt:
+                            return False
+                    except:
+                        pass
                 return True
             filtered_data = [d for d in filtered_data if in_range(d)]
-
-        interval = int(getattr(station, 'intervals', 0) or 0)
         return apply_intervals(filtered_data, interval)
     except Exception as e:
-        print(f"Error in pacioos_method: {e}")
         return []
 
 
@@ -457,6 +444,7 @@ async def dart_method(station, limit=100, start: str = None, end: str = None) ->
     except Exception as e:
         return []
 
+
 async def ioc_method(station, limit=100, start: str = None, end: str = None) -> List[dict]:
     """
     Parse IOC sea level monitoring data, map field names, and return sorted entries.
@@ -492,7 +480,6 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
         if station.token_id:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(select(Token).where(Token.id == station.token_id))
-
                 token_obj = result.scalar_one_or_none()
                 if token_obj:
                     api_key = token_obj.token
@@ -582,6 +569,7 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
                 transformed_data.append(transformed_entry)
             except Exception:
                 continue
+        
         # Sort by time (newest first)
         def parse_timestamp(entry):
             try:
@@ -598,13 +586,195 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
                 return datetime.min
             except:
                 return datetime.min
+        
         sorted_data = sorted(
             transformed_data,
             key=lambda x: parse_timestamp(x),
             reverse=True
         )
+        
         interval = int(getattr(station, 'intervals', 0) or 0)
         filtered_data = filter_bad_data(sorted_data[:limit], getattr(station, 'bad_data', None))
+        
+        # --- Outlier removal (IQR-based) ---
+        OUTLIER_FACTOR = 1.5
+        OUTLIER_MIN_SAMPLES = 12
+
+        def _quantile_sorted(sorted_arr: list[float], q: float) -> float:
+            if not sorted_arr:
+                return float('nan')
+            pos = (len(sorted_arr) - 1) * q
+            base = int(math.floor(pos))
+            rest = pos - base
+            if base + 1 < len(sorted_arr):
+                return sorted_arr[base] + rest * (sorted_arr[base + 1] - sorted_arr[base])
+            else:
+                return sorted_arr[base]
+
+        def _iqr_thresholds(values: list[float], k: float = OUTLIER_FACTOR) -> tuple[float, float]:
+            arr = [v for v in values if v is not None and isinstance(v, (int, float)) and math.isfinite(v)]
+            if not arr:
+                return (-float('inf'), float('inf'))
+            arr.sort()
+            q1 = _quantile_sorted(arr, 0.25)
+            q3 = _quantile_sorted(arr, 0.75)
+            iqr = q3 - q1
+            lower = q1 - k * iqr
+            upper = q3 + k * iqr
+            return (lower, upper)
+
+        def _is_sea_level_key(key: str) -> bool:
+            if not key:
+                return False
+            kl = key.lower()
+            # Treat common sea-level names; many stations label sea level as 'm'
+            if kl in {'sea_level', 'slevel', 'm', 'sea level', 'water_level'}:
+                return True
+            return ('sea' in kl and 'level' in kl) or ('water' in kl and 'level' in kl)
+
+        def _remove_outliers(values: list, key: str, station_id: str):
+            # Convert incoming mixed values to floats where possible, else None
+            num_vals = []
+            for v in values:
+                try:
+                    # Treat sentinel -999 (and string forms) as missing
+                    if v is None or v == -999 or v == "-999" or v == -999.0:
+                        num_vals.append(None)
+                    elif isinstance(v, (int, float)):
+                        num_vals.append(float(v) if math.isfinite(v) else None)
+                    else:
+                        # Try to convert string to float
+                        num_vals.append(float(v))
+                except (ValueError, TypeError):
+                    num_vals.append(None)
+
+            non_null = [v for v in num_vals if v is not None and math.isfinite(v)]
+            non_null_count = len(non_null)
+            
+            # Allow smaller minimum for sea level series to catch obvious spikes in shorter windows
+            min_samples = 5 if _is_sea_level_key(key) else OUTLIER_MIN_SAMPLES
+            if non_null_count < min_samples:
+                # Too short to judge; return original values unchanged
+                return values, 0, None, None
+
+            lower, upper = _iqr_thresholds(num_vals)
+            effective_lower = lower
+            effective_upper = upper
+
+            removed = 0
+            cleaned = []
+            
+            # Domain-aware adjustment for sea level
+            if _is_sea_level_key(key):
+                sorted_vals = sorted(non_null)
+                median = _quantile_sorted(sorted_vals, 0.5)
+                
+                # Calculate MAD (Median Absolute Deviation)
+                abs_devs = [abs(v - median) for v in sorted_vals]
+                mad = _quantile_sorted(sorted(abs_devs), 0.5) if abs_devs else 0.0
+                
+                # Heuristics for sea level
+                domain_lower = 0.15  # meters
+                median_fraction_lower = median * 0.25
+                mad_boost_lower = (median - 6 * mad) if mad > 0 else (median * 0.4)
+                q1 = _quantile_sorted(sorted_vals, 0.25)
+                
+                candidate_lower = max(lower, domain_lower, median_fraction_lower, mad_boost_lower)
+                effective_lower = min(candidate_lower, q1 * 0.9)
+                if effective_lower < lower:
+                    effective_lower = lower
+
+            # Apply outlier filtering
+            for v in num_vals:
+                if v is None or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    cleaned.append(None)
+                    continue
+                    
+                # Sea level specific rules
+                if _is_sea_level_key(key):
+                    # Drop non-positive values for sea level
+                    if v <= 0:
+                        cleaned.append(None)
+                        removed += 1
+                        continue
+                    # Apply domain-adjusted bounds
+                    if v < effective_lower or v > effective_upper:
+                        cleaned.append(None)
+                        removed += 1
+                    else:
+                        cleaned.append(v)
+                else:
+                    # Standard IQR filtering for other variables
+                    if v < lower or v > upper:
+                        cleaned.append(None)
+                        removed += 1
+                    else:
+                        cleaned.append(v)
+
+            # Log results
+            if removed > 0:
+                lb = effective_lower if _is_sea_level_key(key) else lower
+                logger.info(f"[outliers] station={station_id} variable={key} removed={removed} total={len(values)} thresholds=({lb:.3f}, {upper:.3f})")
+
+            return cleaned, removed, effective_lower, upper
+
+        # Build per-key arrays and apply outlier removal
+        if filtered_data:
+            time_fields = {'time', 'timestamp', 'obs_time_utc', 'stime', 'date', 'datetime'}
+            exclude_fields = time_fields | {'lon_deg', 'lat_deg', 'longitude', 'latitude', 'sensor'}
+            
+            # Collect keys to process (numeric-ish)
+            candidate_keys = set()
+            for row in filtered_data:
+                for k, v in row.items():
+                    if k in exclude_fields:
+                        continue
+                    # Consider numeric-looking keys only
+                    if isinstance(v, (int, float)):
+                        candidate_keys.add(k)
+                    else:
+                        try:
+                            float(v)
+                            candidate_keys.add(k)
+                        except (ValueError, TypeError):
+                            pass
+
+            # For each key, build series and clean
+            removed_counts = {}
+            for key in candidate_keys:
+                series = []
+                for row in filtered_data:
+                    series.append(row.get(key))
+                
+                cleaned_series, removed, _, _ = _remove_outliers(
+                    series, key, getattr(station, 'station_id', 'unknown')
+                )
+                removed_counts[key] = removed
+                
+                # Write back cleaned values
+                for idx, val in enumerate(cleaned_series):
+                    if idx < len(filtered_data) and key in filtered_data[idx]:
+                        filtered_data[idx][key] = val
+
+            # Summary log across variables
+            total_removed = sum(removed_counts.values())
+            if total_removed > 0:
+                parts = ", ".join([f"{k}={v}" for k, v in removed_counts.items() if v > 0])
+                logger.info(f"[outliers] station={getattr(station, 'station_id', 'unknown')} total_removed={total_removed} by_variable: {parts}")
+
+            # If any sea-level key became None, drop the entire row for IOC output
+            sea_keys = [k for k in candidate_keys if _is_sea_level_key(k)]
+            if sea_keys:
+                before = len(filtered_data)
+                filtered_data = [
+                    row for row in filtered_data 
+                    if any(row.get(k) is not None for k in sea_keys)
+                ]
+                dropped = before - len(filtered_data)
+                if dropped > 0:
+                    logger.info(f"[outliers] station={getattr(station, 'station_id', 'unknown')} dropped_rows={dropped} due_to_sea_level_null")
+        # --- End outlier removal ---
+
         # Datetime filter
         if start or end:
             def in_range(entry):
@@ -631,10 +801,15 @@ async def ioc_method(station, limit=100, start: str = None, end: str = None) -> 
                         pass
                 return True
             filtered_data = [d for d in filtered_data if in_range(d)]
+        
         return apply_intervals(filtered_data, interval)
+        
     except Exception as e:
-        # print(f"=== IOC METHOD ERROR: {str(e)} ===")
+        logger.error(f"=== IOC METHOD ERROR: {str(e)} ===")
+        import traceback
+        logger.error(traceback.format_exc())
         return []
+
 
 async def refresh_neon_token() -> dict:
     """
@@ -780,15 +955,7 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
 
     # Fetch data from each URL and extract dataset IDs
     all_datasets = []
-    def _shift_iso_z(ts: str, hours: int) -> str:
-        if not ts:
-            return ts
-        try:
-            dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
-            dt = dt + timedelta(hours=hours)
-            return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except Exception:
-            return ts
+    
     try:
         async with httpx.AsyncClient(verify=False) as client:
             for idx, url_template in enumerate(urls):
@@ -883,9 +1050,7 @@ async def actual_neon_method(station, token: str, session_id: str, limit=100, st
                 
                 time_val = sample.get('Time')
                 time_norm = to_iso_z(time_val)
-                # NEON appears to return local (UTC+13) timestamps that are labeled as 'Z'.
-                # Shift to real UTC by subtracting 13 hours.
-                time_norm = _shift_iso_z(time_norm, hours=-13)
+                
                 if not time_norm:
                     continue
                 
