@@ -1,0 +1,47 @@
+# Production: app + Postgres in Docker (same setup as the root docker-compose.yml).
+#
+# Deploy with ./deploy.sh (asks whether to restore the latest db_backup/ file),
+# or run plain `docker compose up -d --build` from this folder.
+
+# Keep the project name "instrument_sys" so this file reuses the existing
+# volume (instrument_sys_postgres_data) that the root docker-compose.yml created.
+# Without this, running from deploy/production would start an EMPTY database.
+name: instrument_sys
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8083}:8000"
+    volumes:
+      - ../../app:/app/app
+      - ../../app/uploads:/app/uploads
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/production/.env}@db:5432/${POSTGRES_DB:-instrument_db}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/production/.env}
+      # Only used the first time the volume is created; an existing database is left alone.
+      - POSTGRES_DB=${POSTGRES_DB:-instrument_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5436}:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
